@@ -55,7 +55,7 @@ def process_user(idx, feat_seq, ng, nf, num_g, num_f):
 
 def dist_seq(FEAT_SEQ, ng, nf, num_g, num_f):
     print("Calculating DTW distance... (Parallel CPU)")
-    num_cores = multiprocessing.cpu_count()
+    num_cores = max(1, multiprocessing.cpu_count() // 6) # Divide by 5-6 concurrent seeds to avoid RAM OOM
     results = Parallel(n_jobs=num_cores)(delayed(process_user)(idx, feat_seq, ng, nf, num_g, num_f) for idx, feat_seq in enumerate(FEAT_SEQ))
     
     DIST_P = [r[0] for r in results]
@@ -128,7 +128,7 @@ def dist_seq_rf(FEAT_SEQ, ng, nf, num_g, num_f):
     del FEAT_SEQ
     
     print("Calculating DTW distance... (Parallel CPU RF)")
-    num_cores = multiprocessing.cpu_count()
+    num_cores = max(1, multiprocessing.cpu_count() // 6) # Divide by 5-6 concurrent seeds to avoid RAM OOM
     results = Parallel(n_jobs=num_cores)(delayed(process_rf_user)(idx, feat_a, FEAT_P[idx], ng, FEAT_A, FEAT_P) for idx, feat_a in enumerate(FEAT_A))
     
     DIST_P = [r[0] for r in results]
