@@ -22,6 +22,9 @@
 # ----------------------------------------------------------------------------------------------------------------------
 
 import numpy as np
+import warnings
+warnings.filterwarnings("ignore", message="Grid size 1 will likely result in GPU under-utilization due to low occupancy.")
+
 import torch
 import torch.cuda
 from numba import jit
@@ -99,7 +102,7 @@ def compute_softdtw_backward_cuda(D, R, inv_gamma, bandwidth, max_i, max_j, inv_
         if I + J == rev_p and (I < max_i and J < max_j):
 
             if math.isinf(R[k, i, j]):
-                R[k, i, j] = -np.inf #math.inf
+                R[k, i, j] = -math.inf
 
             # Don't compute if outside bandwidth
             # if not (abs(i - j) > bandwidth > 0):
@@ -123,7 +126,7 @@ class _SoftDTWCUDA(Function):
     def forward(ctx, D, gamma, bandwidth):
         dev = D.device
         dtype = D.dtype
-        gamma = torch.cuda.FloatTensor([gamma])
+        gamma = torch.tensor([gamma], dtype=dtype, device=dev)
 
         B = D.shape[0]
         N = D.shape[1]
@@ -132,10 +135,10 @@ class _SoftDTWCUDA(Function):
         n_passes = 2 * threads_per_block - 1
 
         bandwidth = max(bandwidth, max(1./(N-1), 1./(M-1)))
-        bandwidth = torch.cuda.FloatTensor([bandwidth])
+        bandwidth = torch.tensor([bandwidth], dtype=dtype, device=dev)
 
         # Prepare the output array
-        R = torch.ones((B, N + 2, M + 2), device=dev, dtype=dtype) * np.inf #math.inf
+        R = torch.full((B, N + 2, M + 2), float('inf'), device=dev, dtype=dtype)
         R[:, 0, 0] = 0
 
         # Run the CUDA kernel.
@@ -162,8 +165,8 @@ class _SoftDTWCUDA(Function):
         D_ = torch.zeros((B, N + 2, M + 2), dtype=dtype, device=dev)
         D_[:, 1:N + 1, 1:M + 1] = D
 
-        R[:, :, -1] = -np.inf #math.inf
-        R[:, -1, :] = -np.inf #math.inf
+        R[:, :, -1] = float('-inf')
+        R[:, -1, :] = float('-inf')
         R[:, -1, -1] = R[:, -2, -2]
 
         E = torch.zeros((B, N + 2, M + 2), dtype=dtype, device=dev)
@@ -254,12 +257,12 @@ class _SoftDTW(Function):
     def forward(ctx, D, gamma, bandwidth):
         dev = D.device
         dtype = D.dtype
-        gamma = torch.Tensor([gamma]).to(dev).type(dtype)  # dtype fixed
-        bandwidth = torch.Tensor([bandwidth]).to(dev).type(dtype)
+        gamma = torch.tensor([gamma], dtype=dtype, device=dev)
+        bandwidth = torch.tensor([bandwidth], dtype=dtype, device=dev)
         D_ = D.detach().cpu().numpy()
         g_ = gamma.item()
         b_ = bandwidth.item()
-        R = torch.Tensor(compute_softdtw(D_, g_, b_)).to(dev).type(dtype)
+        R = torch.tensor(compute_softdtw(D_, g_, b_), dtype=dtype, device=dev)
         ctx.save_for_backward(D, R, gamma, bandwidth)
         return R[:, -2, -2]
 
@@ -272,7 +275,7 @@ class _SoftDTW(Function):
         R_ = R.detach().cpu().numpy()
         g_ = gamma.item()
         b_ = bandwidth.item()
-        E = torch.Tensor(compute_softdtw_backward(D_, R_, g_, b_)).to(dev).type(dtype)
+        E = torch.tensor(compute_softdtw_backward(D_, R_, g_, b_), dtype=dtype, device=dev)
         return grad_output.view(-1, 1, 1).expand_as(E) * E, None, None
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -309,8 +312,8 @@ class SoftDTW(torch.nn.Module):
 
         use_cuda = self.use_cuda
 
-        if use_cuda and (lx > 1024 or ly > 1024):  # We should be able to spawn enough threads in CUDA
-            # print("SoftDTW: Cannot use CUDA because the sequence length > 1024 (the maximum block size supported by CUDA)")
+        if use_cuda and (lx > 4096 or ly > 4096):  # Increased limit for modern GPUs like L40S / RTX 6000
+            # print("SoftDTW: Cannot use CUDA because the sequence length > 4096")
             use_cuda = False
 
         # Finally, return the correct function

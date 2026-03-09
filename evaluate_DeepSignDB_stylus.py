@@ -10,7 +10,6 @@ import torch.nn.functional as F
 import torch.nn.utils as nutils
 import torch.optim as optim
 import torchvision.utils as vutils
-from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
 import dataset.datasetTest_SF as dataset
@@ -46,7 +45,7 @@ num_g = 25; num_f = 25
 print("For MCYT:")
 
 dset = dataset.dataset(sigDict=sigDict, finger_scene=False)
-sampler = dataset.batchSampler(dset)
+sampler = dataset.batchSampler(dset, user_batch_size=32)
 dataLoader = DataLoader(dset, batch_sampler=sampler, collate_fn=dataset.collate_fn)
 
 model = Model(
@@ -58,25 +57,32 @@ model = Model(
           n_shot_g=n_shot_g, 
           n_shot_f=n_shot_f, 
           batchsize=num_g+num_f)
-model.load_state_dict(torch.load("models/%d/epoch%s"%(args.seed, args.epoch)))
+model.load_state_dict(torch.load("models/%d/epoch%s"%(args.seed, args.epoch), weights_only=True))
 
 model.cuda()
 model.train(mode=False)
 model.eval()
 
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
 
-    mask = model.getOutputMask(lens)
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
+
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d"%args.seed):
     os.makedirs("log/seed%d"%args.seed)
@@ -97,24 +103,29 @@ num_g = 16; num_f = 12
 print("For BiosecurID:")
 
 dset = dataset.dataset(sigDict=sigDict, finger_scene=False)
-sampler = dataset.batchSampler(dset)
+sampler = dataset.batchSampler(dset, user_batch_size=32)
 dataLoader = DataLoader(dset, batch_sampler=sampler, collate_fn=dataset.collate_fn)
 
-model.h0 = Variable(torch.zeros(2, num_g+num_f, 128).cuda(), requires_grad=False)
 
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/bio"%args.seed):
     os.makedirs("log/seed%d/bio"%args.seed)
@@ -133,28 +144,36 @@ num_g = 19; num_f = 20
 print("For Biosecure DS2:")
 
 dset = dataset.dataset(sigDict=sigDict, finger_scene=False)
-sampler = dataset.batchSampler(dset)
+sampler = dataset.batchSampler(dset, user_batch_size=32)
 dataLoader = DataLoader(dset, batch_sampler=sampler, collate_fn=dataset.collate_fn)
 
-model.h0 = Variable(torch.zeros(2, num_g+num_f, 128).cuda(), requires_grad=False)
 
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For BSDB2, 4 templates in session 1 + session2
-    idxs = numpy.concatenate([numpy.array([0,1,2,3]), numpy.arange(15, 50)])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        # For BSDB2, 4 templates in session 1 + session2
+        idxs = numpy.concatenate([numpy.array([0,1,2,3]), numpy.arange(15, 50)])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/bsds2"%args.seed):
     os.makedirs("log/seed%d/bsds2"%args.seed)
@@ -172,25 +191,30 @@ num_g = 8; num_f = 6
 print("For eBS DS2 w2:")
 
 dset = dataset.dataset(sigDict=sigDict, finger_scene=False)
-sampler = dataset.batchSampler(dset)
+sampler = dataset.batchSampler(dset, user_batch_size=32)
 dataLoader = DataLoader(dset, batch_sampler=sampler, collate_fn=dataset.collate_fn)
 
-model.h0 = Variable(torch.zeros(2, num_g+num_f, 128).cuda(), requires_grad=False)
 
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio2
-    mask = model.getOutputMask(lens)
+        # For EBio2
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/ebio2"%args.seed):
     os.makedirs("log/seed%d/ebio2"%args.seed)
@@ -208,32 +232,40 @@ sigDict = pickle.load(open("../Data/EBio1_eva.pkl", "rb"), encoding='iso-8859-1'
 num_g = 8; num_f = 6
 
 dset = dataset.dataset(sigDict=sigDict, finger_scene=False)
-sampler = dataset.batchSampler(dset)
+sampler = dataset.batchSampler(dset, user_batch_size=32)
 dataLoader = DataLoader(dset, batch_sampler=sampler, collate_fn=dataset.collate_fn)
 
-model.h0 = Variable(torch.zeros(2, num_g+num_f, 128).cuda(), requires_grad=False)
 
 print("For eBS DS1 w1:")
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio1
-    device = 0
-    idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
-                              numpy.array([40,41,42,55,56,57]) + device * 3])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
-    sig = sig[:,0:int(numpy.max(lens)),:]
+        # For EBio1
+        device = 0
+        idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
+        numpy.array([40,41,42,55,56,57]) + device * 3])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        sig = sig[:,0:int(numpy.max(lens)),:]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/ebio1"%args.seed):
     os.makedirs("log/seed%d/ebio1"%args.seed)
@@ -247,26 +279,35 @@ numpy.save("log/seed%d/ebio1/dtw_dist_n%s_d0.npy"%(args.seed, args.epoch), DIST_
 numpy.save("log/seed%d/ebio1/dtw_dist_temp%s_d0.npy"%(args.seed, args.epoch), DIST_TEMP)
 
 print("For eBS DS1 w2:")
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio1
-    device = 1
-    idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
-                              numpy.array([40,41,42,55,56,57]) + device * 3])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
-    sig = sig[:,0:int(numpy.max(lens)),:]
+        # For EBio1
+        device = 1
+        idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
+        numpy.array([40,41,42,55,56,57]) + device * 3])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        sig = sig[:,0:int(numpy.max(lens)),:]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/ebio1"%args.seed):
     os.makedirs("log/seed%d/ebio1"%args.seed)
@@ -280,26 +321,35 @@ numpy.save("log/seed%d/ebio1/dtw_dist_n%s_d1.npy"%(args.seed, args.epoch), DIST_
 numpy.save("log/seed%d/ebio1/dtw_dist_temp%s_d1.npy"%(args.seed, args.epoch), DIST_TEMP)
 
 print("For eBS DS1 w3:")
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio1
-    device = 2
-    idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
-                              numpy.array([40,41,42,55,56,57]) + device * 3])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
-    sig = sig[:,0:int(numpy.max(lens)),:]
+        # For EBio1
+        device = 2
+        idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
+        numpy.array([40,41,42,55,56,57]) + device * 3])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        sig = sig[:,0:int(numpy.max(lens)),:]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/ebio1"%args.seed):
     os.makedirs("log/seed%d/ebio1"%args.seed)
@@ -313,26 +363,35 @@ numpy.save("log/seed%d/ebio1/dtw_dist_n%s_d2.npy"%(args.seed, args.epoch), DIST_
 numpy.save("log/seed%d/ebio1/dtw_dist_temp%s_d2.npy"%(args.seed, args.epoch), DIST_TEMP)
 
 print("For eBS DS1 w4:")
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio1
-    device = 3
-    idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
-                              numpy.array([40,41,42,55,56,57]) + device * 3])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
-    sig = sig[:,0:int(numpy.max(lens)),:]
+        # For EBio1
+        device = 3
+        idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
+        numpy.array([40,41,42,55,56,57]) + device * 3])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        sig = sig[:,0:int(numpy.max(lens)),:]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/ebio1"%args.seed):
     os.makedirs("log/seed%d/ebio1"%args.seed)
@@ -346,26 +405,35 @@ numpy.save("log/seed%d/ebio1/dtw_dist_n%s_d3.npy"%(args.seed, args.epoch), DIST_
 numpy.save("log/seed%d/ebio1/dtw_dist_temp%s_d3.npy"%(args.seed, args.epoch), DIST_TEMP)
 
 print("For eBS DS1 w5:")
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio1
-    device = 4
-    idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
-                              numpy.array([40,41,42,55,56,57]) + device * 3])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
-    sig = sig[:,0:int(numpy.max(lens)),:]
+        # For EBio1
+        device = 4
+        idxs = numpy.concatenate([numpy.array([0,1,10,11,20,21,30,31]) + device * 2,
+        numpy.array([40,41,42,55,56,57]) + device * 3])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        sig = sig[:,0:int(numpy.max(lens)),:]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/ebio1"%args.seed):
     os.makedirs("log/seed%d/ebio1"%args.seed)

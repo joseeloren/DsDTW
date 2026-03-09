@@ -12,7 +12,6 @@ import torch.nn.utils as nutils
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torchvision.utils as vutils
-from torch.autograd import Variable
 from torch.utils.data import DataLoader
 import dataset.datasetTrainAll_SF as dataset
 from dsdtw import DSDTW as Model
@@ -101,9 +100,9 @@ for epoch in range(0, args.epochs):
         sig, lens, label = batch
         mask = model.getOutputMask(lens)
 
-        sig = Variable(torch.from_numpy(sig)).cuda()
-        mask = Variable(torch.from_numpy(mask)).cuda()
-        label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
         optimizer.zero_grad()
         output, length, _ = model(sig, mask) #(N,T,D)

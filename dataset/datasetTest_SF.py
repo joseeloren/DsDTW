@@ -38,16 +38,18 @@ class dataset(object):
 
 class batchSampler(object):
     """docstring for sampler"""
-    def __init__(self, dataset):
+    def __init__(self, dataset, user_batch_size=1):
         super(batchSampler, self).__init__()
-        self.numIters = len(dataset)
-        self.index = numpy.arange(0, self.numIters, dtype=numpy.int32)
+        self.user_batch_size = user_batch_size
+        self.dataset_len = len(dataset)
+        self.numIters = int(numpy.ceil(self.dataset_len / user_batch_size))
         self.accumNumNeg = dataset.accumNumNeg
 
     def __iter__(self):
-        for uidx in self.index:
-            # One batch one user
-            batch = numpy.arange(uidx * self.accumNumNeg, (uidx + 1) * self.accumNumNeg, dtype=numpy.int32)
+        for i in range(self.numIters):
+            start = i * self.user_batch_size
+            end = min(start + self.user_batch_size, self.dataset_len)
+            batch = numpy.arange(start * self.accumNumNeg, end * self.accumNumNeg, dtype=numpy.int32)
             yield batch
 
     def __len__(self):

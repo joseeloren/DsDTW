@@ -8,7 +8,6 @@ import torch.nn.functional as F
 import torch.nn.utils as nutils
 import torch.optim as optim
 import torchvision.utils as vutils
-from torch.autograd import Variable
 from soft_dtw_cuda import SoftDTW
 from dtw_cuda import DTW
 
@@ -28,7 +27,7 @@ class DSDTW(nn.Module):
         self.n_shot_g = n_shot_g 
         self.n_shot_f = n_shot_f
         self.n_task = n_task
-        self.smoothCElossMask = torch.zeros(n_task * (1 + n_shot_g + n_shot_f)).cuda()
+        self.smoothCElossMask = torch.zeros(n_task * (1 + n_shot_g + n_shot_f), device='cuda')
         for i in range(n_task):
             self.smoothCElossMask[i*(1+n_shot_g+n_shot_f):i*(1+n_shot_g+n_shot_f)+1+n_shot_g]=(1.0+n_shot_g+n_shot_f)/(1.0+n_shot_g)
         if batchsize is None:
@@ -43,7 +42,7 @@ class DSDTW(nn.Module):
                 )
 
         self.rnn = nn.GRU(n_hidden, n_hidden, n_layers, dropout=0.1, batch_first=True, bidirectional=False) #(input_size,hidden_size,num_layers)
-        self.h0 = Variable(torch.zeros(n_layers, batchsize, n_hidden).cuda(), requires_grad=False)
+        self.h0 = torch.zeros(n_layers, batchsize, n_hidden, device='cuda', requires_grad=False)
         ## close update gate
         for i in range(n_layers):
             eval("self.rnn.bias_hh_l%d"%i)[n_hidden:2*n_hidden].data.fill_(-1e10) #Initial update gate bias
@@ -86,7 +85,7 @@ class DSDTW(nn.Module):
         output = nutils.rnn.pack_padded_sequence(output, list(length.cpu().numpy()), batch_first=True)
         output, hidden = self.rnn(output, self.h0)
         output, length = nutils.rnn.pad_packed_sequence(output, batch_first=True) 
-        length = Variable(length).cuda()
+        length = length.clone().detach().cuda()
 
         '''Recover the original order'''
         _, indices = torch.sort(indices, descending=False)

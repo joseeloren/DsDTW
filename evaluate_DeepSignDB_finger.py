@@ -11,7 +11,6 @@ import torch.nn.functional as F
 import torch.nn.utils as nutils
 import torch.optim as optim
 import torchvision.utils as vutils
-from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
 import dataset.datasetTest_SF as dataset
@@ -46,7 +45,7 @@ sigDict = pickle.load(open("../Data/EBio1_eva_finger.pkl", "rb"), encoding="iso-
 num_g = 8; num_f = 6
 
 dset = dataset.dataset(sigDict=sigDict, finger_scene=True)
-sampler = dataset.batchSampler(dset)
+sampler = dataset.batchSampler(dset, user_batch_size=32)
 dataLoader = DataLoader(dset, batch_sampler=sampler, collate_fn=dataset.collate_fn)
 
 model = Model(
@@ -58,33 +57,44 @@ model = Model(
           n_shot_g=n_shot_g, 
           n_shot_f=n_shot_f, 
           batchsize=num_g+num_f)
-model.load_state_dict(torch.load("models/%d/epoch%s"%(args.seed, args.epoch)))##gamma5_AP2
+model.load_state_dict(torch.load("models/%d/epoch%s"%(args.seed, args.epoch), weights_only=True))##gamma5_AP2
 
 model.cuda()
 model.train(mode=False)
 model.eval()
 
+with torch.no_grad():
+
 print("For eBS DS1 w4, finger inputs:")
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio1, finger
-    device = 0
-    idxs = numpy.concatenate([numpy.array([0,1,4,5,8,9,12,13]) + device * 2,
-                              numpy.array([16,17,18,22,23,24]) + device * 3])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
-    sig = sig[:,0:int(numpy.max(lens)),:]
+        # For EBio1, finger
+        device = 0
+        idxs = numpy.concatenate([numpy.array([0,1,4,5,8,9,12,13]) + device * 2,
+        numpy.array([16,17,18,22,23,24]) + device * 3])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        sig = sig[:,0:int(numpy.max(lens)),:]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d"%args.seed):
     os.makedirs("log/seed%d"%args.seed)
@@ -101,26 +111,35 @@ numpy.save("log/seed%d/ebio1_finger/dtw_dist_n%s_d0.npy"%(args.seed, args.epoch)
 numpy.save("log/seed%d/ebio1_finger/dtw_dist_temp%s_d0.npy"%(args.seed, args.epoch), DIST_TEMP)
 
 print("For eBS DS1 w5, finger inputs:")
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio1, finger
-    device = 1
-    idxs = numpy.concatenate([numpy.array([0,1,4,5,8,9,12,13]) + device * 2,
-                              numpy.array([16,17,18,22,23,24]) + device * 3])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
-    sig = sig[:,0:int(numpy.max(lens)),:]
+        # For EBio1, finger
+        device = 1
+        idxs = numpy.concatenate([numpy.array([0,1,4,5,8,9,12,13]) + device * 2,
+        numpy.array([16,17,18,22,23,24]) + device * 3])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        sig = sig[:,0:int(numpy.max(lens)),:]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/ebio1_finger"%args.seed):
     os.makedirs("log/seed%d/ebio1_finger"%args.seed)
@@ -138,32 +157,41 @@ sigDict = pickle.load(open("../Data/EBio2_eva_finger.pkl", "rb"), encoding="iso-
 num_g = 8; num_f = 6
 
 dset = dataset.dataset(sigDict=sigDict, finger_scene=True)
-sampler = dataset.batchSampler(dset)
+sampler = dataset.batchSampler(dset, user_batch_size=32)
 dataLoader = DataLoader(dset, batch_sampler=sampler, collate_fn=dataset.collate_fn)
 
 print("For eBS DS2 w5, finger inputs:")
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio2, finger
-    device = 0
-    if device == 0:
-      idxs = numpy.concatenate([numpy.array([0,1,4,5,8,9,10,11]), numpy.array([16,17,18,22,23,24])])
-    else:
-      idxs = numpy.concatenate([numpy.array([2,3,6,7,12,13,14,15]), numpy.array([19,20,21,25,26,27])])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
-    sig = sig[:,0:int(numpy.max(lens)),:]
+        # For EBio2, finger
+        device = 0
+        if device == 0:
+        idxs = numpy.concatenate([numpy.array([0,1,4,5,8,9,10,11]), numpy.array([16,17,18,22,23,24])])
+        else:
+        idxs = numpy.concatenate([numpy.array([2,3,6,7,12,13,14,15]), numpy.array([19,20,21,25,26,27])])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        sig = sig[:,0:int(numpy.max(lens)),:]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/ebio2_finger"%args.seed):
     os.makedirs("log/seed%d/ebio2_finger"%args.seed)
@@ -177,28 +205,37 @@ numpy.save("log/seed%d/ebio2_finger/dtw_dist_n%s_d0.npy"%(args.seed, args.epoch)
 numpy.save("log/seed%d/ebio2_finger/dtw_dist_temp%s_d0.npy"%(args.seed, args.epoch), DIST_TEMP)
 
 print("For eBS DS2 w6, finger inputs:")
-feats = []
-for idx, batch in enumerate(dataLoader):
-    sig, lens, label = batch
+with torch.no_grad():
+    feats = []
+    for idx, batch in enumerate(dataLoader):
+        sig, lens, label = batch
 
-    # For EBio2, finger
-    device = 1
-    if device == 0:
-      idxs = numpy.concatenate([numpy.array([0,1,4,5,8,9,10,11]), numpy.array([16,17,18,22,23,24])])
-    else:
-      idxs = numpy.concatenate([numpy.array([2,3,6,7,12,13,14,15]), numpy.array([19,20,21,25,26,27])])
-    sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
-    sig = sig[:,0:int(numpy.max(lens)),:]
+        # For EBio2, finger
+        device = 1
+        if device == 0:
+        idxs = numpy.concatenate([numpy.array([0,1,4,5,8,9,10,11]), numpy.array([16,17,18,22,23,24])])
+        else:
+        idxs = numpy.concatenate([numpy.array([2,3,6,7,12,13,14,15]), numpy.array([19,20,21,25,26,27])])
+    
+        batch_u = len(sig) // dset.accumNumNeg
+        idxs = numpy.concatenate([idxs + u * dset.accumNumNeg for u in range(batch_u)])
+        sig = sig[idxs]; lens = lens[idxs]; label = label[idxs]
+        sig = sig[:,0:int(numpy.max(lens)),:]
 
-    mask = model.getOutputMask(lens)
+    
+        model.h0 = torch.zeros(2, len(sig), 128, device='cuda', requires_grad=False)
+        mask = model.getOutputMask(lens)
 
-    sig = Variable(torch.from_numpy(sig)).cuda()
-    mask = Variable(torch.from_numpy(mask)).cuda()
-    label = Variable(torch.from_numpy(label)).cuda()
+        sig = torch.tensor(sig, device='cuda')
+        mask = torch.tensor(mask, device='cuda')
+        label = torch.tensor(label, device='cuda')
 
-    output, length, ht = model(sig, mask) #(N,T,D)
-    output = output.data.cpu().numpy()
-    feats.append(output)
+
+        output, length, ht = model(sig, mask) #(N,T,D)
+        output_np = output.data.cpu().numpy()
+        n_users = len(output_np) // (num_g + num_f)
+        for u in range(n_users):
+            feats.append(output_np[u*(num_g+num_f):(u+1)*(num_g+num_f)])
 
 if not os.path.exists("log/seed%d/ebio2_finger"%args.seed):
     os.makedirs("log/seed%d/ebio2_finger"%args.seed)
