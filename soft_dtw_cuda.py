@@ -131,7 +131,7 @@ class _SoftDTWCUDA(Function):
         B = D.shape[0]
         N = D.shape[1]
         M = D.shape[2]
-        threads_per_block = max(N, M)
+        threads_per_block = min(max(N, M), 1024)
         n_passes = 2 * threads_per_block - 1
 
         bandwidth = max(bandwidth, max(1./(N-1), 1./(M-1)))
@@ -159,7 +159,7 @@ class _SoftDTWCUDA(Function):
         B = D.shape[0]
         N = D.shape[1]
         M = D.shape[2]
-        threads_per_block = max(N, M)
+        threads_per_block = min(max(N, M), 1024)
         n_passes = 2 * threads_per_block - 1
 
         D_ = torch.zeros((B, N + 2, M + 2), dtype=dtype, device=dev)
@@ -312,8 +312,8 @@ class SoftDTW(torch.nn.Module):
 
         use_cuda = self.use_cuda
 
-        if use_cuda and (lx > 4096 or ly > 4096):  # Increased limit for modern GPUs like L40S / RTX 6000
-            # print("SoftDTW: Cannot use CUDA because the sequence length > 4096")
+        if use_cuda and (lx > 1024 or ly > 1024):  # CUDA block sizes cannot exceed 1024 threads physically
+            # print("SoftDTW: Cannot use CUDA because the sequence length > 1024")
             use_cuda = False
 
         # Finally, return the correct function
